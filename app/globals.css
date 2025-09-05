@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #4b4b4b;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.react-calendar {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.react-calendar__tile--now {
+  background: rgb(221, 217, 243) !important;
+}
+
+.react-calendar__tile--active {
+  background: #7c3aed !important; /* Tailwind's blue-600 */
+  color: white !important;
+}
+
+.react-calendar__tile:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.react-calendar__month-view__days__day--weekend:nth-child(7n) {
+  color: hsl(17, 86%, 58%);
+}
+
+.react-calendar__month-view__days__day--weekend:nth-child(7n + 6) {
+  color: hsl(17, 86%, 58%);
+}
+
+.cl-userButtonAvatarBox,
+.cl-userButtonTrigger .cl-avatarBox {
+  background-color: #7c3aed !important; /* purple */
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* Make the calendar participate in light/dark variable colors */
+.react-calendar {
+  color: var(--foreground);
+  color-scheme: light dark; /* lets the UA adapt controls without overriding your colors */
+}
+
+/* Navigation (month/year + arrows) */
+.react-calendar__navigation button {
+  color: var(--foreground) !important;
+  -webkit-text-fill-color: var(--foreground) !important; /* Safari */
+  background: transparent;
+}
+
+/* Weekday headers (Mon, Tue, …) */
+.react-calendar__month-view__weekdays abbr {
+  color: var(--foreground) !important;
+  -webkit-text-fill-color: var(--foreground) !important;
+  text-decoration: none; /* react-calendar sets underline via abbr */
+}
+
+/* Day tiles (numbers) */
+.react-calendar__tile {
+  color: var(--foreground) !important;
+  -webkit-text-fill-color: var(--foreground) !important;
+  background: transparent;
+}
+
+/* Today */
+.react-calendar__tile--now {
+  background: rgb(221, 217, 243) !important;
+}
+
+/* Selected */
+.react-calendar__tile--active {
+  background: #7c3aed !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+}
+
+/* Disabled: don't rely on UA gray; set your own and avoid dimming twice */
+.react-calendar__tile:disabled,
+.react-calendar__navigation button:disabled {
+  color: #9ca3af !important; /* Tailwind gray-400-ish */
+  -webkit-text-fill-color: #9ca3af !important;
+  opacity: 1 !important; /* you already tint via color */
+  cursor: not-allowed;
+  background: transparent;
+}
+
+/* Weekend color wins after the base color above */
+.react-calendar__month-view__days__day--weekend:nth-child(7n),
+.react-calendar__month-view__days__day--weekend:nth-child(7n + 6) {
+  color: hsl(17, 86%, 58%) !important;
+  -webkit-text-fill-color: hsl(17, 86%, 58%) !important;
+}
+
+/* globals.css */
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.35),
+    transparent
+  );
+  animation: shimmer 1.2s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

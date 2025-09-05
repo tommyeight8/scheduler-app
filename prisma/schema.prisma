@@ -1,0 +1,96 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int             @id @default(autoincrement())
+  clerkUserId  String          @unique
+  email        String          @unique
+  name         String
+  appointments Appointment[]
+}
+
+enum AppointmentStatus {
+  confirmed
+  cancelled
+  done
+}
+
+model NailTech {
+  id            Int           @id @default(autoincrement())
+  name          String        @unique
+  appointments  Appointment[]
+}
+
+enum DesignPricingMode {
+  none     // no design option
+  fixed    // fixed add-on price defined on Service
+  custom   // price entered per appointment
+}
+
+model DesignPriceOption {
+  id         Int     @id @default(autoincrement())
+  serviceId  Int
+  service    Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  label      String?   // e.g. "Simple", "Intricate"
+  priceCents Int
+
+  @@index([serviceId])
+}
+
+model Service {
+  id              Int      @id @default(autoincrement())
+  name            String   @unique
+  priceCents      Int
+  active          Boolean  @default(true)
+  durationMin     Int?
+
+  // NEW: design configuration
+  designMode      DesignPricingMode @default(none)
+  designPriceCents Int?             // used when designMode = fixed
+
+  designPriceOptions DesignPriceOption[]
+
+  // relations
+  appointments    Appointment[]
+}
+
+model Appointment {
+  id             Int        @id @default(autoincrement())
+  date           DateTime   @db.Timestamptz(6)
+  user           User       @relation(fields: [userId], references: [id])
+  userId         Int
+  status         AppointmentStatus
+  customerName   String
+  phoneNumber    String
+  nailTech       NailTech?  @relation(fields: [nailTechId], references: [id])
+  nailTechId     Int?
+
+  // existing snapshots
+  service        Service?   @relation(fields: [serviceId], references: [id])
+  serviceId      Int?
+  serviceName    String
+  priceCents     Int        // base service price snapshot
+
+  // NEW: design snapshot (per appointment)
+  hasDesign          Boolean   @default(false)
+  designPriceCents   Int?      // snapshot of add-on price when hasDesign = true
+  designNotes        String?   // optional (e.g., “simple flowers on ring finger”)
+
+  @@index([date])
+  @@index([nailTechId, date])
+  @@index([status])
+  @@index([serviceId])
+}

@@ -1,7 +1,10 @@
+// components/CreateService.tsx
 "use client";
 
 import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import { useCreateService } from "@/hooks/useServices";
+import LoadingSpinner from "./LoadingSpinner";
 
 type Props = {
   className?: string;
@@ -15,7 +18,7 @@ type Props = {
 };
 
 type DesignMode = "none" | "fixed" | "custom";
-type PresetRow = { id: string; label: string; price: string }; // price is USD string
+type PresetRow = { id: string; label: string; price: string }; // USD string
 
 export default function CreateService({ className, onCreated }: Props) {
   // base fields
@@ -28,14 +31,17 @@ export default function CreateService({ className, onCreated }: Props) {
   const [fixedDesignPrice, setFixedDesignPrice] = useState(""); // USD string
   const [presets, setPresets] = useState<PresetRow[]>([]); // for custom
 
-  // ui
-  const [submitting, setSubmitting] = useState(false);
+  // validation state
   const [errors, setErrors] = useState<{
     name?: string;
     price?: string;
     fixedDesignPrice?: string;
     presets?: string;
   }>({});
+
+  // 🔹 TanStack mutation
+  const createService = useCreateService();
+  const submitting = createService.isPending;
 
   const basePriceCents = Math.round((Number(price) || 0) * 100);
   const fixedPriceCents = Math.round((Number(fixedDesignPrice) || 0) * 100);
@@ -56,16 +62,10 @@ export default function CreateService({ className, onCreated }: Props) {
     }
 
     if (designMode === "custom") {
-      // Presets are optional; if user added rows, validate prices
-      const hasAny = presets.length > 0;
       const bad = presets.some(
         (p) => p.price.trim() !== "" && !(Number(p.price) > 0)
       );
       if (bad) errs.presets = "Each preset must have a valid positive price.";
-      // (Label is optional; empty label is fine)
-      // (It's okay if there are 0 presets; user will enter price during booking)
-      // If you want at least one preset, uncomment:
-      // if (!hasAny) errs.presets = "Add at least one preset or switch design mode.";
     }
 
     return errs;
@@ -101,51 +101,27 @@ export default function CreateService({ className, onCreated }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
     const errs = validate();
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
+    const body: any = {
+      name: name.trim(),
+      priceCents: basePriceCents,
+      durationMin: duration ? Number(duration) : undefined,
+      active: true,
+      designMode,
+      designPriceCents: designMode === "fixed" ? fixedPriceCents : null, // server will normalize if not fixed
+      ...(designMode === "custom" && payloadDesignPriceOptions.length
+        ? { designPriceOptions: payloadDesignPriceOptions }
+        : {}),
+    };
+
     try {
-      setSubmitting(true);
+      const created = await createService.mutateAsync(body);
 
-      const body: any = {
-        name: name.trim(),
-        priceCents: basePriceCents,
-        durationMin: duration ? Number(duration) : undefined,
-        active: true,
-        designMode,
-      };
-
-      if (designMode === "fixed") {
-        body.designPriceCents = fixedPriceCents; // API requires > 0 in fixed mode
-      } else {
-        body.designPriceCents = null; // server will normalize anyway
-      }
-
-      if (designMode === "custom" && payloadDesignPriceOptions.length) {
-        body.designPriceOptions = payloadDesignPriceOptions;
-      }
-
-      const res = await fetch("/api/services", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        // server may return zod flatten; surface a friendly message
-        const serverMsg =
-          data?.error?.formErrors?.join?.(", ") ??
-          data?.error?.message ??
-          data?.error ??
-          "Failed to create service";
-        toast.error(serverMsg);
-        return;
-      }
-
-      toast.success("Service created");
-      // reset
+      // reset form
       setName("");
       setPrice("");
       setDuration("");
@@ -153,11 +129,10 @@ export default function CreateService({ className, onCreated }: Props) {
       setFixedDesignPrice("");
       setPresets([]);
       setErrors({});
-      onCreated?.(data.service ?? data);
-    } catch {
-      toast.error("Network error. Please try again.");
-    } finally {
-      setSubmitting(false);
+
+      onCreated?.(created as any);
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to create service.");
     }
   }
 
@@ -221,7 +196,7 @@ export default function CreateService({ className, onCreated }: Props) {
             disabled={submitting}
             className="rounded bg-violet-600 hover:bg-violet-500 transition duration-150 cursor-pointer text-white px-4 py-2 disabled:opacity-50"
           >
-            {submitting ? "Saving…" : "Add Service"}
+            {submitting ? <LoadingSpinner text="Adding" /> : "Add Service"}
           </button>
         </div>
       </div>

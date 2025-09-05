@@ -135,7 +135,7 @@ function ServiceRow({
     <tr className="border-b border-gray-200">
       <td className="p-3">
         <input
-          className="rounded px-2 py-1 w-full"
+          className="rounded px-2 py-1 flex-1"
           value={name}
           onChange={(e) => setName(e.target.value)}
           aria-label="Service name"

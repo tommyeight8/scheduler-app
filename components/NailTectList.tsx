@@ -1,11 +1,9 @@
+// components/NailTechList.tsx
 "use client";
 
 import Skeleton from "./Skeleton";
 
-export type NailTech = {
-  id: number;
-  name: string;
-};
+export type NailTech = { id: number; name: string };
 
 type Props = {
   techs: NailTech[];

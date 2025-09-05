@@ -4,9 +4,8 @@ import { prisma } from "@/lib/prisma";
 
 export async function POST(req: Request) {
   const { userId: clerkUserId } = await auth();
-  if (!clerkUserId) {
+  if (!clerkUserId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
   const body = await req.json();
   const {
@@ -16,10 +15,9 @@ export async function POST(req: Request) {
     nailTechId,
     nailTechName,
     serviceId,
-    // NEW (optional inputs for design)
     addDesign,
-    designPrice, // USD (number) only when service.designMode === "custom"
-    designNotes, // optional string
+    designPrice, // USD number when custom
+    designNotes,
   } = body as {
     date: string;
     customerName: string;
@@ -41,11 +39,9 @@ export async function POST(req: Request) {
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkUserId } });
-    if (!user) {
+    if (!user)
       return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
 
-    // Ensure service exists and is active
     const svc = await prisma.service.findUnique({
       where: { id: Number(serviceId) },
       select: {
@@ -53,26 +49,28 @@ export async function POST(req: Request) {
         name: true,
         active: true,
         priceCents: true,
-        designMode: true, // "none" | "fixed" | "custom"
-        designPriceCents: true, // when fixed
+        designMode: true,
+        designPriceCents: true,
+        durationMin: true, // optional: handy for details modal
       },
     });
     if (!svc || !svc.active) {
       return NextResponse.json({ error: "Invalid service." }, { status: 400 });
     }
 
-    // Create nail tech if only a name was passed
-    let finalNailTechId = nailTechId as number | undefined;
+    // Resolve or create nail tech
+    let finalNailTechId = nailTechId;
     if (!finalNailTechId && nailTechName) {
-      const newTech = await prisma.nailTech.create({
+      const created = await prisma.nailTech.create({
         data: { name: nailTechName },
+        select: { id: true },
       });
-      finalNailTechId = newTech.id;
+      finalNailTechId = created.id;
     }
 
     const appointmentDate = new Date(date);
 
-    // Conflict: same tech, same minute
+    // Conflict guard (same tech, same minute)
     if (finalNailTechId) {
       const conflict = await prisma.appointment.findFirst({
         where: { nailTechId: finalNailTechId, date: appointmentDate },
@@ -81,12 +79,12 @@ export async function POST(req: Request) {
       if (conflict) {
         return NextResponse.json(
           { error: "This nail tech already has an appointment at that time." },
-          { status: 400 }
+          { status: 409 } // ← better status code
         );
       }
     }
 
-    // ---- Design add-on logic (server-enforced) ----
+    // Design snapshot
     const wantsDesign = Boolean(addDesign);
     let hasDesign = false;
     let designPriceCentsSnapshot: number | null = null;
@@ -102,7 +100,6 @@ export async function POST(req: Request) {
           { status: 400 }
         );
       }
-
       if (svc.designMode === "fixed") {
         if (svc.designPriceCents == null) {
           return NextResponse.json(
@@ -113,7 +110,6 @@ export async function POST(req: Request) {
         hasDesign = true;
         designPriceCentsSnapshot = svc.designPriceCents;
       }
-
       if (svc.designMode === "custom") {
         if (typeof designPrice !== "number" || !(designPrice > 0)) {
           return NextResponse.json(
@@ -129,28 +125,44 @@ export async function POST(req: Request) {
       }
     }
 
-    // Create appointment with snapshots (service + design)
-    const appointment = await prisma.appointment.create({
+    // Create with snapshots
+    const created = await prisma.appointment.create({
       data: {
         date: appointmentDate,
         userId: user.id,
-        status: "confirmed",
+        status: "confirmed", // ← confirm your enum
         customerName,
         phoneNumber,
-        nailTechId: finalNailTechId,
+        nailTechId: finalNailTechId ?? null,
 
         serviceId: svc.id,
-        serviceName: svc.name, // snapshot
-        priceCents: svc.priceCents, // snapshot (base)
+        serviceName: svc.name,
+        priceCents: svc.priceCents,
 
         hasDesign,
         designPriceCents: hasDesign ? designPriceCentsSnapshot : null,
         designNotes: hasDesign ? designNotesSanitized : null,
       },
-      include: { nailTech: true, service: true },
+      select: {
+        id: true,
+        date: true,
+        customerName: true,
+        phoneNumber: true,
+        status: true,
+        nailTech: { select: { name: true } },
+        serviceId: true,
+        serviceName: true,
+        priceCents: true,
+        hasDesign: true,
+        designPriceCents: true,
+        designNotes: true,
+      },
     });
 
-    return NextResponse.json({ success: true, appointment });
+    return NextResponse.json(
+      { success: true, appointment: created },
+      { status: 201 }
+    );
   } catch (err) {
     console.error("Create appointment error:", err);
     return NextResponse.json(
@@ -160,101 +172,72 @@ export async function POST(req: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const { userId: clerkUserId } = await auth();
-
-  if (!clerkUserId) {
+  if (!clerkUserId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
-  const user = await prisma.user.findUnique({
-    where: { clerkUserId },
-  });
-
-  if (!user) {
+  const user = await prisma.user.findUnique({ where: { clerkUserId } });
+  if (!user)
     return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
+
+  // Optional: support ?date=YYYY-MM-DD
+  const url = new URL(req.url);
+  const date = url.searchParams.get("date");
+
+  // If you want shop-TZ scoping, compute start/end in shop tz and convert to UTC.
+  // For simple UTC-day scoping:
+  const whereDate = date
+    ? {
+        date: {
+          gte: new Date(`${date}T00:00:00.000Z`),
+          lt: new Date(`${date}T23:59:59.999Z`),
+        },
+      }
+    : {};
 
   const appointments = await prisma.appointment.findMany({
-    include: { nailTech: true },
-    orderBy: { date: "desc" },
+    where: whereDate,
+    orderBy: { date: "asc" },
+    select: {
+      id: true,
+      date: true,
+      customerName: true,
+      phoneNumber: true,
+      status: true,
+      nailTech: { select: { name: true } },
+
+      serviceId: true,
+      serviceName: true,
+      priceCents: true,
+
+      hasDesign: true,
+      designPriceCents: true,
+      designNotes: true,
+
+      // optional: include duration through relation if you didn’t snapshot it
+      service: { select: { durationMin: true } },
+    },
   });
 
-  return NextResponse.json({ appointments });
+  const shaped = appointments.map((a) => ({
+    id: a.id,
+    date: a.date,
+    customerName: a.customerName,
+    phoneNumber: a.phoneNumber,
+    status: a.status,
+    nailTech: a.nailTech, // { name } | null
+
+    serviceId: a.serviceId,
+    serviceName: a.serviceName,
+    priceCents: a.priceCents,
+
+    hasDesign: a.hasDesign,
+    designPriceCents: a.designPriceCents,
+    designNotes: a.designNotes,
+
+    serviceDurationMin: a.service?.durationMin ?? null,
+  }));
+
+  return NextResponse.json({ appointments: shaped });
 }
-
-// import { NextResponse } from "next/server";
-// import { auth } from "@clerk/nextjs/server";
-
-// import { prisma } from "@/lib/prisma";
-
-// export async function POST(req: Request) {
-//   const { userId: clerkUserId } = await auth();
-//   if (!clerkUserId) {
-//     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-//   }
-
-//   const body = await req.json();
-//   const { date, customerName, phoneNumber, nailTechId, nailTechName } = body;
-
-//   try {
-//     const user = await prisma.user.findUnique({ where: { clerkUserId } });
-//     if (!user) {
-//       return NextResponse.json({ error: "User not found" }, { status: 404 });
-//     }
-
-//     let finalNailTechId = nailTechId;
-
-//     if (!nailTechId && nailTechName) {
-//       const newTech = await prisma.nailTech.create({
-//         data: { name: nailTechName },
-//       });
-//       finalNailTechId = newTech.id;
-//     }
-
-//     const appointment = await prisma.appointment.create({
-//       data: {
-//         date: new Date(date),
-//         userId: user.id,
-//         status: "confirmed",
-//         customerName,
-//         phoneNumber,
-//         nailTechId: finalNailTechId,
-//       },
-//       include: {
-//         nailTech: true, // ✅ include this
-//       },
-//     });
-
-//     return NextResponse.json({ success: true, appointment });
-//   } catch (err) {
-//     console.error("Create appointment error:", err);
-//     return NextResponse.json(
-//       { error: "Internal server error" },
-//       { status: 500 }
-//     );
-//   }
-// }
-
-// export async function GET() {
-//   const { userId: clerkUserId } = await auth();
-
-//   if (!clerkUserId) {
-//     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-//   }
-
-//   const user = await prisma.user.findUnique({
-//     where: { clerkUserId },
-//   });
-
-//   if (!user) {
-//     return NextResponse.json({ error: "User not found" }, { status: 404 });
-//   }
-
-//   const appointments = await prisma.appointment.findMany({
-//     include: { nailTech: true }, // ✅ Include nail tech relation
-//     orderBy: { date: "desc" },
-//   });
-
-//   return NextResponse.json({ appointments });
-// }

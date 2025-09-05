@@ -8,7 +8,7 @@ export default function LoadingSpinner({
   text?: string;
 }) {
   return (
-    <div className="flex items-center justify-center gap-2 text-sm">
+    <div className="flex items-center justify-center gap-2">
       <FaSpinner className="animate-spin h-4 w-4" />
       {text}
     </div>

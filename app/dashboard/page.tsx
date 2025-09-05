@@ -1,32 +1,39 @@
-// ServicesAdminPage.tsx
 "use client";
 
 import ConfirmDelete from "@/components/ConfirmDelete";
-import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import CreateNailTech from "@/components/CreateNailTech";
 import CreateService from "@/components/CreateService";
 import ServiceList, { Service } from "@/components/ServiceList";
 import NailTechList from "@/components/NailTectList";
 import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import {
+  useDeleteService,
+  useNailTechs,
+  useServices,
+  useUpdateService,
+} from "@/hooks/useServices";
+import RevenueChart from "@/components/RevenueChart";
 
-// ⬇️ Extend type to include design fields
-type NailTech = { id: number; name: string };
 type ServiceWithDesign = Service & {
   designMode?: "none" | "fixed" | "custom";
   designPriceCents?: number | null;
 };
+type NailTech = { id: number; name: string };
 
 export default function ServicesAdminPage() {
   const router = useRouter();
 
-  // SERVICES
-  const [services, setServices] = useState<ServiceWithDesign[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: services = [], isLoading: loadingServices } = useServices();
+  const {
+    data: nailTechs = [],
+    isLoading: loadingTechs,
+    refetch: refetchTechs,
+  } = useNailTechs();
 
-  // NAIL TECHS
-  const [nailTechs, setNailTechs] = useState<NailTech[]>([]);
-  const [loadingTechs, setLoadingTechs] = useState(true);
+  const updateSvc = useUpdateService();
+  const deleteSvc = useDeleteService();
 
   // DELETE MODAL
   const [pendingDelete, setPendingDelete] = useState<{
@@ -37,96 +44,41 @@ export default function ServicesAdminPage() {
   // EDIT FIXED DESIGN PRICE MODAL
   const [editTarget, setEditTarget] = useState<ServiceWithDesign | null>(null);
 
-  async function loadServices() {
-    try {
-      setLoading(true);
-      const r = await fetch("/api/services");
-      if (!r.ok) throw new Error();
-      const d = await r.json();
-      setServices(d.services ?? []);
-    } catch {
-      toast.error("Failed to load services");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadNailTechs() {
-    try {
-      setLoadingTechs(true);
-      const r = await fetch("/api/nail-tech");
-      if (!r.ok) throw new Error();
-      const d = await r.json();
-      setNailTechs(d.nailTechs ?? []);
-    } catch {
-      toast.error("Failed to load nail techs");
-    } finally {
-      setLoadingTechs(false);
-    }
-  }
-
-  useEffect(() => {
-    loadServices();
-    loadNailTechs();
-  }, []);
-
-  async function updateService(id: number, patch: Partial<ServiceWithDesign>) {
-    const r = await fetch(`/api/services/${id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    if (!r.ok) return toast.error("Failed to update");
-    toast.success("Updated");
-    loadServices();
-  }
-
-  function handleTechCreated() {
-    loadNailTechs();
-  }
-
-  async function deleteService(id: number) {
-    const r = await fetch(`/api/services/${id}`, { method: "DELETE" });
-    if (!r.ok) {
-      toast.error("Delete failed");
-      return setPendingDelete(null);
-    }
-    const d = await r.json();
-    if (d.softDeleted) toast("Service in use → set to inactive.");
-    else toast.success("Deleted");
-    setPendingDelete(null);
-    loadServices();
-  }
-
   const activeServices = useMemo(
     () => services.filter((s) => s.active),
     [services]
   );
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-6">
+      <RevenueChart />
+
       <CreateNailTech
         className="bg-white p-4 rounded-xl shadow-lg/5"
-        onCreated={handleTechCreated}
+        onCreated={() => refetchTechs()}
       />
 
       <NailTechList
-        techs={nailTechs}
+        techs={nailTechs as NailTech[]}
         loading={loadingTechs}
         onView={(id) => router.push(`/admin/nail-tech/${id}`)}
       />
 
       <CreateService
         className="bg-white p-4 rounded-xl shadow-lg/5"
-        onCreated={() => loadServices()}
+        onCreated={() => {
+          // Easiest: invalidate by querying again
+          // (Because CreateService probably POSTs; after success, you can invalidate here too.)
+          // If CreateService can accept a callback, call qc.invalidateQueries(['services']) there.
+          toast.success("Created");
+        }}
       />
 
       <ServiceList
         services={services}
-        loading={loading}
-        onUpdate={updateService}
+        loading={loadingServices}
+        onUpdate={(id, patch) => updateSvc.mutate({ id, patch })}
         onRequestDelete={(id, name) => setPendingDelete({ id, name })}
-        // ⬇️ new prop: open modal when clicking pencil
         onEditFixedPrice={(svc) => setEditTarget(svc)}
       />
 
@@ -143,16 +95,22 @@ export default function ServicesAdminPage() {
         cancelText="Cancel"
         danger
         onCancel={() => setPendingDelete(null)}
-        onConfirm={() => pendingDelete && deleteService(pendingDelete.id)}
+        onConfirm={async () => {
+          if (!pendingDelete) return;
+          await deleteSvc.mutateAsync(pendingDelete.id);
+          setPendingDelete(null);
+        }}
       />
 
-      {/* ⬇️ Edit fixed design price modal */}
       {editTarget && editTarget.designMode === "fixed" && (
         <EditDesignPriceModal
           service={editTarget}
           onClose={() => setEditTarget(null)}
           onSaved={(cents) => {
-            updateService(editTarget.id, { designPriceCents: cents });
+            updateSvc.mutate({
+              id: editTarget.id,
+              patch: { designPriceCents: cents },
+            });
             setEditTarget(null);
           }}
         />

@@ -1,7 +1,9 @@
+// components/CreateNailTech.tsx
 "use client";
 
 import { useState } from "react";
-import toast from "react-hot-toast";
+import { useCreateNailTech } from "@/hooks/useServices";
+import LoadingSpinner from "./LoadingSpinner";
 
 type Props = {
   className?: string;
@@ -10,13 +12,14 @@ type Props = {
 
 export default function CreateNailTech({ className, onCreated }: Props) {
   const [name, setName] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const createTech = useCreateNailTech();
+  const submitting = createTech.isPending;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = name.trim();
-
     if (!trimmed) {
       setError("Nail tech name is required.");
       return;
@@ -24,28 +27,12 @@ export default function CreateNailTech({ className, onCreated }: Props) {
     setError(null);
 
     try {
-      setSubmitting(true);
-      const res = await fetch("/api/nail-tech", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = data?.error ?? "Failed to create nail tech.";
-        toast.error(msg);
-        setError(msg); // also show inline if it's a validation error
-        return;
-      }
-
-      toast.success("Nail tech created");
+      const created = await createTech.mutateAsync(trimmed);
       setName("");
-      onCreated?.(data.nailTech);
-    } catch {
-      toast.error("Network error—please try again.");
-    } finally {
-      setSubmitting(false);
+      onCreated?.(created);
+    } catch (err) {
+      // Error toast is shown in the hook; also show inline message
+      setError((err as Error)?.message ?? "Failed to create nail tech.");
     }
   }
 
@@ -78,7 +65,7 @@ export default function CreateNailTech({ className, onCreated }: Props) {
             disabled={submitting}
             className="rounded px-4 py-2 text-white bg-violet-600 hover:bg-violet-500 transition duration-150 cursor-pointer disabled:opacity-50"
           >
-            {submitting ? "Saving…" : "Create"}
+            {submitting ? <LoadingSpinner text="Adding" /> : "Add Nail Tech"}
           </button>
         </div>
       </div>

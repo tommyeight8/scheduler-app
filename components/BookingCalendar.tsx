@@ -16,6 +16,20 @@ import { formatInTimeZone } from "date-fns-tz";
 import Link from "next/link";
 import getColorForId from "@/utils/getColorForId";
 
+import {
+  useAppointmentsForDay,
+  useCreateAppointment,
+  useNailTechs,
+  useServices,
+} from "@/hooks/useBookingData";
+
+function dayToISO(date: Date | null) {
+  if (!date) return null;
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
 type Appointment = {
   id: number | string;
   date: string;
@@ -53,7 +67,6 @@ function generateTimeSlots(start = 11, end = 20) {
 
 export default function BookingCalendar() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedTime, setSelectedTime] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -61,8 +74,8 @@ export default function BookingCalendar() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [isBooking, setIsBooking] = useState(false);
+  const isoDay = dayToISO(selectedDate);
 
-  const [services, setServices] = useState<Service[]>([]);
   // NEW: presets state
   const [useCustomInput, setUseCustomInput] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<number | null>(null);
@@ -71,13 +84,21 @@ export default function BookingCalendar() {
     null
   );
 
-  const [nailTechs, setNailTechs] = useState<{ id: number; name: string }[]>(
-    []
-  );
   const [selectedTechId, setSelectedTechId] = useState<
     number | "add-new" | null
   >(null);
   const [newTechName, setNewTechName] = useState("");
+
+  // queries
+  const { data: services = [], isLoading: servicesLoading } = useServices();
+  const { data: nailTechs = [], isLoading: techsLoading } = useNailTechs();
+  const {
+    data: appointments = [],
+    isLoading: apptsLoading,
+    refetch: refetchAppts,
+  } = useAppointmentsForDay(isoDay);
+  // mutation
+  const createAppt = useCreateAppointment();
 
   // NEW: design add-on state
   const [addDesign, setAddDesign] = useState(false);
@@ -116,30 +137,6 @@ export default function BookingCalendar() {
 
   const needsDesignPrice =
     addDesign && isCustomDesign && (!designPrice || !(Number(designPrice) > 0));
-
-  useEffect(() => {
-    fetch("/api/services")
-      .then((r) => r.json())
-      .then((d) => setServices(d.services));
-  }, []);
-
-  useEffect(() => {
-    fetch("/api/nail-tech")
-      .then((res) => res.json())
-      .then((data) => setNailTechs(data.nailTechs));
-  }, []);
-
-  useEffect(() => {
-    if (selectedDate) fetchAppointments();
-  }, [selectedDate]);
-
-  async function fetchAppointments() {
-    const res = await fetch("/api/appointments");
-    if (res.ok) {
-      const data = await res.json();
-      setAppointments(data.appointments);
-    }
-  }
 
   function getSlotAppointments(date: Date, time: string): Appointment[] {
     const slotUtcISO = localSlotToUtcISO(date, time);
@@ -191,32 +188,19 @@ export default function BookingCalendar() {
   async function handleBooking() {
     if (!selectedDate || !selectedTime || !customerName || !phoneNumber) return;
 
-    if (!selectedServiceId) {
-      toast.error("Please select a service.");
-      return;
-    }
-
-    if (hasConflict) {
-      toast.error("This nail tech already has an appointment at that time.");
-      return;
-    }
-
-    // design validation (client)
-    if (addDesign && isCustomDesign && needsDesignPrice) {
-      toast.error("Please enter a valid design price.");
-      return;
-    }
-
-    if (customNeedsPriceError) {
-      toast.error("Please choose a preset or enter a valid design price.");
-      return;
-    }
-
-    // setIsBooking(true);
+    if (!selectedServiceId) return toast.error("Please select a service.");
+    if (hasConflict)
+      return toast.error(
+        "This nail tech already has an appointment at that time."
+      );
+    if (addDesign && isCustomDesign && needsDesignPrice)
+      return toast.error("Please enter a valid design price.");
+    if (customNeedsPriceError)
+      return toast.error(
+        "Please choose a preset or enter a valid design price."
+      );
 
     const dateISO = localSlotToUtcISO(selectedDate, selectedTime);
-
-    // compute USD value for designPrice to send (only for custom mode)
     const usdFromPreset =
       presetPriceCents != null ? presetPriceCents / 100 : undefined;
     const designPriceUsd =
@@ -228,57 +212,32 @@ export default function BookingCalendar() {
 
     try {
       setIsBooking(true);
-      const res = await fetch("/api/appointments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: dateISO,
-          customerName,
-          phoneNumber,
-          nailTechId: techIdNum,
-          nailTechName: selectedTechId === "add-new" ? newTechName : undefined,
-          serviceId: selectedServiceId,
-
-          // design payload
-          addDesign,
-          designPrice: designPriceUsd,
-          designNotes:
-            addDesign && designNotes.trim() ? designNotes.trim() : undefined,
-        }),
+      await createAppt.mutateAsync({
+        date: dateISO,
+        customerName,
+        phoneNumber,
+        nailTechId: techIdNum,
+        nailTechName: selectedTechId === "add-new" ? newTechName : undefined,
+        serviceId: selectedServiceId,
+        addDesign,
+        designPrice: designPriceUsd,
+        designNotes:
+          addDesign && designNotes.trim() ? designNotes.trim() : undefined,
+        _dayISO: isoDay, // used in onSuccess to invalidate that specific day
       });
-
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {}
-
-      if (res.ok) {
-        toast.success("Appointment booked successfully!");
-        setStatus("success");
-        resetForm();
-        fetchAppointments();
-
-        if (selectedTechId === "add-new") {
-          const fresh = await fetch("/api/nail-tech");
-          const nd = await fresh.json();
-          setNailTechs(nd.nailTechs);
-        }
-      } else {
-        const msg =
-          data?.error ||
-          (res.status === 409
-            ? "This nail tech already has an appointment at that time."
-            : "Failed to book appointment.");
-        toast.error(msg);
-        setStatus("error");
-      }
+      setStatus("success");
+      resetForm();
+      // If your /api/appointments endpoint ignores the day param, you can refetch anyway:
+      refetchAppts();
     } catch {
-      toast.error("Network error. Please try again.");
       setStatus("error");
     } finally {
       setIsBooking(false);
     }
   }
+
+  const loadingAny =
+    servicesLoading || techsLoading || (isoDay && apptsLoading);
 
   return (
     <div className="max-w-xl mx-auto p-6 rounded-lg shadow bg-white">
@@ -345,7 +304,7 @@ export default function BookingCalendar() {
                           const initial =
                             appt.nailTech?.name?.charAt(0).toUpperCase() || "?";
                           const bgColor = getColorForId(
-                            appt.nailTech?.id || appt.id
+                            appt.nailTech?.name || appt.id
                           );
                           return (
                             <span

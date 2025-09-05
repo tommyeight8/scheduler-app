@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { UserButton, SignedIn, SignedOut, useUser } from "@clerk/nextjs";
-import { use, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { PiPaintBrushFill } from "react-icons/pi";
 
 export function Header() {
   const { user, isLoaded } = useUser();
@@ -13,9 +12,9 @@ export function Header() {
       <div className="flex items-center space-x-6">
         <Link
           href="/dashboard"
-          className="text-xl font-semibold hover:underline"
+          className="text-xl font-semibold hover:underline bg-gradient-to-br from-purple-500 to-rose-400 h-8 w-8 rounded-md flex justify-center items-center"
         >
-          Scheduler
+          <PiPaintBrushFill />
         </Link>
         <Link href="/dashboard/appointments" className="hover:underline">
           Appointments

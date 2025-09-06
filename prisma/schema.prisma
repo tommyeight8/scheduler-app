@@ -69,7 +69,10 @@ model Service {
 
 model Appointment {
   id             Int        @id @default(autoincrement())
+
+  // Start time (UTC) — keeps being your single source of truth for booking start
   date           DateTime   @db.Timestamptz(6)
+
   user           User       @relation(fields: [userId], references: [id])
   userId         Int
   status         AppointmentStatus
@@ -78,19 +81,33 @@ model Appointment {
   nailTech       NailTech?  @relation(fields: [nailTechId], references: [id])
   nailTechId     Int?
 
-  // existing snapshots
+  // Snapshots captured at booking time
   service        Service?   @relation(fields: [serviceId], references: [id])
   serviceId      Int?
   serviceName    String
   priceCents     Int        // base service price snapshot
 
-  // NEW: design snapshot (per appointment)
-  hasDesign          Boolean   @default(false)
-  designPriceCents   Int?      // snapshot of add-on price when hasDesign = true
-  designNotes        String?   // optional (e.g., “simple flowers on ring finger”)
+  // ✅ NEW: snapshot the service duration at booking time (minutes)
+  // Used for overlap checks and historical accuracy even if Service changes later
+  serviceDurationMin Int?
 
+  // Design snapshot (per appointment)
+  hasDesign          Boolean   @default(false)
+  designPriceCents   Int?
+  designNotes        String?
+
+  // ✅ NEW: when the appointment is actually completed (used by revenue bucketing)
+  finishedAt      DateTime?  @db.Timestamptz(6)
+
+  // ✅ OPTIONAL: lock revenue at done-time to prevent drift if prices change later
+  totalCents      Int?
+
+  // Helpful indexes you already had
   @@index([date])
   @@index([nailTechId, date])
   @@index([status])
   @@index([serviceId])
+
+  // ✅ NEW: DB-level guard against exact duplicate starts for the same tech
+  @@unique([nailTechId, date])
 }

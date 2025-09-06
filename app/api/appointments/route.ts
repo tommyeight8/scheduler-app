@@ -51,7 +51,7 @@ export async function POST(req: Request) {
         priceCents: true,
         designMode: true,
         designPriceCents: true,
-        durationMin: true, // optional: handy for details modal
+        durationMin: true,
       },
     });
     if (!svc || !svc.active) {
@@ -61,8 +61,10 @@ export async function POST(req: Request) {
     // Resolve or create nail tech
     let finalNailTechId = nailTechId;
     if (!finalNailTechId && nailTechName) {
-      const created = await prisma.nailTech.create({
-        data: { name: nailTechName },
+      const created = await prisma.nailTech.upsert({
+        where: { name: nailTechName },
+        update: {},
+        create: { name: nailTechName },
         select: { id: true },
       });
       finalNailTechId = created.id;
@@ -70,7 +72,7 @@ export async function POST(req: Request) {
 
     const appointmentDate = new Date(date);
 
-    // Conflict guard (same tech, same minute)
+    // Same-minute guard (you should also have a duration-overlap check server-side)
     if (finalNailTechId) {
       const conflict = await prisma.appointment.findFirst({
         where: { nailTechId: finalNailTechId, date: appointmentDate },
@@ -79,7 +81,7 @@ export async function POST(req: Request) {
       if (conflict) {
         return NextResponse.json(
           { error: "This nail tech already has an appointment at that time." },
-          { status: 409 } // ← better status code
+          { status: 409 }
         );
       }
     }
@@ -130,7 +132,7 @@ export async function POST(req: Request) {
       data: {
         date: appointmentDate,
         userId: user.id,
-        status: "confirmed", // ← confirm your enum
+        status: "confirmed",
         customerName,
         phoneNumber,
         nailTechId: finalNailTechId ?? null,
@@ -149,7 +151,8 @@ export async function POST(req: Request) {
         customerName: true,
         phoneNumber: true,
         status: true,
-        nailTech: { select: { name: true } },
+        // ✅ include id here
+        nailTech: { select: { id: true, name: true } },
         serviceId: true,
         serviceName: true,
         priceCents: true,
@@ -181,12 +184,9 @@ export async function GET(req: Request) {
   if (!user)
     return NextResponse.json({ error: "User not found" }, { status: 404 });
 
-  // Optional: support ?date=YYYY-MM-DD
   const url = new URL(req.url);
   const date = url.searchParams.get("date");
 
-  // If you want shop-TZ scoping, compute start/end in shop tz and convert to UTC.
-  // For simple UTC-day scoping:
   const whereDate = date
     ? {
         date: {
@@ -205,7 +205,8 @@ export async function GET(req: Request) {
       customerName: true,
       phoneNumber: true,
       status: true,
-      nailTech: { select: { name: true } },
+      // ✅ include id here too
+      nailTech: { select: { id: true, name: true } },
 
       serviceId: true,
       serviceName: true,
@@ -215,7 +216,6 @@ export async function GET(req: Request) {
       designPriceCents: true,
       designNotes: true,
 
-      // optional: include duration through relation if you didn’t snapshot it
       service: { select: { durationMin: true } },
     },
   });
@@ -226,7 +226,8 @@ export async function GET(req: Request) {
     customerName: a.customerName,
     phoneNumber: a.phoneNumber,
     status: a.status,
-    nailTech: a.nailTech, // { name } | null
+    // ✅ pass through id + name so the client can compare tech ids
+    nailTech: a.nailTech, // { id, name } | null
 
     serviceId: a.serviceId,
     serviceName: a.serviceName,

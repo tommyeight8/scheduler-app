@@ -106,26 +106,29 @@ export async function PATCH(
 
 export async function DELETE(
   _: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { userId } = await auth();
   if (!userId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const id = Number(params.id);
-  if (!Number.isFinite(id))
+  const { id: idStr } = await params;
+  const numericId = Number(idStr);
+  if (!Number.isFinite(numericId)) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
 
-  // Safe-delete: if referenced by appointments, set inactive; else hard delete.
-  const used = await prisma.appointment.count({ where: { serviceId: id } });
+  const used = await prisma.appointment.count({
+    where: { serviceId: numericId },
+  });
   if (used > 0) {
     const svc = await prisma.service.update({
-      where: { id },
+      where: { id: numericId }, // ← fixed
       data: { active: false },
     });
     return NextResponse.json({ service: svc, softDeleted: true });
   }
 
-  await prisma.service.delete({ where: { id } });
+  await prisma.service.delete({ where: { id: numericId } }); // ← fixed
   return NextResponse.json({ success: true });
 }

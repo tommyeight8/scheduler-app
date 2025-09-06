@@ -18,13 +18,13 @@ const UpdateSchema = z.object({
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { userId } = await auth();
   if (!userId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const id = Number(params.id);
+  const { id } = await params;
   if (!Number.isFinite(id))
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
@@ -37,9 +37,14 @@ export async function PATCH(
     );
   }
 
+  const numericId = Number.parseInt(id, 10);
+  if (Number.isNaN(numericId)) {
+    return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
+
   // We need the current values to validate cross-field invariants.
   const current = await prisma.service.findUnique({
-    where: { id },
+    where: { id: numericId },
     select: { designMode: true, designPriceCents: true },
   });
   if (!current)
@@ -95,7 +100,7 @@ export async function PATCH(
     designPriceCents: nextDesignMode === "fixed" ? nextDesignPriceCents : null,
   };
 
-  const svc = await prisma.service.update({ where: { id }, data });
+  const svc = await prisma.service.update({ where: { id: numericId }, data });
   return NextResponse.json({ service: svc });
 }
 

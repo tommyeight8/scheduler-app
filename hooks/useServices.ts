@@ -13,7 +13,7 @@ type ServiceWithDesign = Service & {
   designPriceCents?: number | null;
 };
 
-// ---------- helpers ----------
+// Nail Tech
 
 async function postJSON<T>(url: string, body: unknown): Promise<T> {
   const r = await fetch(url, {
@@ -21,63 +21,13 @@ async function postJSON<T>(url: string, body: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-
-  // try to parse error JSON -> fallback to text
+  const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    let msg = "Request failed";
-    try {
-      const j = await r.json();
-      msg = j?.error ?? msg;
-    } catch {
-      try {
-        msg = await r.text();
-      } catch {}
-    }
+    const msg = (data as any)?.error ?? "Request failed";
     throw new Error(msg);
   }
-
-  // handle empty
-  const text = await r.text();
-  if (!text) return {} as T;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return {} as T;
-  }
+  return data;
 }
-
-async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
-
-  if (!r.ok) {
-    let msg = "Request failed";
-    try {
-      const j = await r.json();
-      msg = j?.error ?? msg;
-    } catch {
-      try {
-        msg = await r.text();
-      } catch {}
-    }
-    throw new Error(msg);
-  }
-
-  // 204 No Content or empty body tolerance
-  if (r.status === 204) return {} as T;
-  const ct = r.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) {
-    const text = await r.text().catch(() => "");
-    if (!text) return {} as T;
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      return {} as T;
-    }
-  }
-  return r.json();
-}
-
-// ---------- Nail Tech ----------
 
 export function useCreateNailTech() {
   const qc = useQueryClient();
@@ -90,7 +40,7 @@ export function useCreateNailTech() {
       return d.nailTech;
     },
 
-    // optimistic insert
+    // Optional: optimistic insert
     onMutate: async (name) => {
       await qc.cancelQueries({ queryKey: qk.nailTechs() });
       const prev = qc.getQueryData<NailTech[]>(qk.nailTechs());
@@ -105,6 +55,7 @@ export function useCreateNailTech() {
     },
 
     onSuccess: (created, _vars, ctx) => {
+      // Swap temp with real if we optimistically inserted
       const list = qc.getQueryData<NailTech[]>(qk.nailTechs());
       if (list && ctx?.tempId) {
         qc.setQueryData<NailTech[]>(
@@ -112,6 +63,7 @@ export function useCreateNailTech() {
           list.map((t) => (t.id === ctx.tempId ? created : t))
         );
       } else {
+        // If no optimistic insert happened, just append
         qc.setQueryData<NailTech[]>(qk.nailTechs(), (prev = []) => [
           ...prev,
           created,
@@ -121,12 +73,19 @@ export function useCreateNailTech() {
     },
 
     onSettled: () => {
+      // keep things honest if other fields exist (counts, sorting, etc.)
       qc.invalidateQueries({ queryKey: qk.nailTechs() });
     },
   });
 }
 
-// ---------- Services ----------
+// Services
+
+async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(url, init);
+  if (!r.ok) throw new Error(await r.text().catch(() => "Request failed"));
+  return r.json();
+}
 
 export function useServices() {
   return useQuery({
@@ -137,6 +96,7 @@ export function useServices() {
       );
       return d.services ?? [];
     },
+    // UX tuning:
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
@@ -163,7 +123,6 @@ export function useUpdateService() {
       id: number;
       patch: Partial<ServiceWithDesign>;
     }) => {
-      // Works with 200 + JSON or 204 No Content
       await fetchJSON(`/api/services/${vars.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -171,6 +130,7 @@ export function useUpdateService() {
       });
       return vars;
     },
+    // optimistic update
     onMutate: async ({ id, patch }) => {
       await qc.cancelQueries({ queryKey: qk.services() });
       const prev = qc.getQueryData<ServiceWithDesign[]>(qk.services());
@@ -199,17 +159,13 @@ export function useDeleteService() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: number) => {
-      // Accepts { softDeleted?: boolean }, { ok?: boolean }, or 204
-      try {
-        const d = await fetchJSON<{ softDeleted?: boolean; ok?: boolean }>(
-          `/api/services/${id}`,
-          { method: "DELETE" }
-        );
-        return d;
-      } catch (e: any) {
-        // Re-throw so onError runs
-        throw e;
-      }
+      const d = await fetchJSON<{ softDeleted?: boolean }>(
+        `/api/services/${id}`,
+        {
+          method: "DELETE",
+        }
+      );
+      return d;
     },
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: qk.services() });
@@ -222,16 +178,13 @@ export function useDeleteService() {
       }
       return { prev };
     },
-    onError: (e: any, _id, ctx) => {
+    onError: (_e, _id, ctx) => {
       if (ctx?.prev) qc.setQueryData(qk.services(), ctx.prev);
-      toast.error(e?.message || "Delete failed");
+      toast.error("Delete failed");
     },
     onSuccess: (d) => {
-      if (d?.softDeleted) {
-        toast("Service in use → set to inactive.");
-      } else {
-        toast.success("Deleted");
-      }
+      if (d.softDeleted) toast("Service in use → set to inactive.");
+      else toast.success("Deleted");
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: qk.services() });
@@ -256,32 +209,12 @@ export function useCreateService() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-
-      if (!r.ok) {
-        let msg = "Failed to create service";
-        try {
-          const j = await r.json();
-          msg = j?.error ?? msg;
-        } catch {
-          try {
-            msg = await r.text();
-          } catch {}
-        }
-        throw new Error(msg);
-      }
-
-      // tolerate either { service } or the entity itself
-      const text = await r.text();
-      if (!text) return {} as ServiceWithDesign;
-      try {
-        const data = JSON.parse(text);
-        return (data.service ?? data) as ServiceWithDesign;
-      } catch {
-        return {} as ServiceWithDesign;
-      }
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error ?? "Failed to create service");
+      // return created service shape your API returns
+      return (data.service ?? data) as ServiceWithDesign;
     },
-
-    // optimistic insert
+    // optional optimistic insert
     onMutate: async (body) => {
       await qc.cancelQueries({ queryKey: qk.services() });
       const prev = qc.getQueryData<ServiceWithDesign[]>(qk.services());

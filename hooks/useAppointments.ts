@@ -13,22 +13,15 @@ export type Appointment = {
   status: AppointmentStatus;
   nailTech: { name: string } | null;
 
-  // snapshots from your Prisma model:
   serviceId?: number | null;
   serviceName: string;
-  priceCents: number; // base service price snapshot
+  priceCents: number;
 
   hasDesign: boolean;
   designPriceCents?: number | null;
   designNotes?: string | null;
 
-  // optional derived for convenience (not required):
   serviceDurationMin?: number | null;
-};
-
-export const qk = {
-  appts: (scope?: string | number | undefined) =>
-    ["appointments", scope ?? "all"] as const,
 };
 
 async function getJSON<T>(url: string) {
@@ -37,20 +30,35 @@ async function getJSON<T>(url: string) {
   return r.json() as Promise<T>;
 }
 
-/** Scope can be a date string like YYYY-MM-DD, or undefined for "all". */
-export function useAppointments(scope?: string) {
-  const url = scope ? `/api/appointments?date=${scope}` : "/api/appointments";
+const isYMD = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+/** Fetch appointments scoped to a YYYY-MM-DD date.
+ *  You can pass `initial` from the server page to hydrate the first render.
+ */
+export function useAppointments(date?: string, initial?: Appointment[]) {
+  const enabled = isYMD(date);
+  const key = ["appointments", enabled ? date : "pending"] as const;
+
   return useQuery({
-    queryKey: qk.appts(scope),
+    queryKey: key,
     queryFn: async () =>
-      (await getJSON<{ appointments: Appointment[] }>(url)).appointments ?? [],
+      (
+        await getJSON<{ appointments: Appointment[] }>(
+          `/api/appointments/date/${date}`
+        )
+      ).appointments ?? [],
+    enabled, // don't run until date is valid
+    ...(initial && enabled ? { initialData: initial } : {}),
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     staleTime: 30_000,
   });
 }
 
-export function useUpdateAppointmentStatus(scope?: string) {
+export function useUpdateAppointmentStatus(date?: string) {
   const qc = useQueryClient();
+  const key = ["appointments", isYMD(date) ? date : "pending"] as const;
+
   return useMutation({
     mutationFn: async (vars: { id: number; status: AppointmentStatus }) => {
       const r = await fetch(`/api/appointments/${vars.id}`, {
@@ -62,26 +70,25 @@ export function useUpdateAppointmentStatus(scope?: string) {
       return vars;
     },
     onMutate: async ({ id, status }) => {
-      await qc.cancelQueries({ queryKey: qk.appts(scope) });
-      const prev = qc.getQueryData<Appointment[]>(qk.appts(scope));
-
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<Appointment[]>(key);
       if (prev) {
         qc.setQueryData<Appointment[]>(
-          qk.appts(scope),
+          key,
           prev.map((a) => (a.id === id ? { ...a, status } : a))
         );
       }
       return { prev };
     },
     onError: (_e, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.appts(scope), ctx.prev);
+      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
       toast.error("Error updating status");
     },
     onSuccess: () => {
       toast.success("Status updated");
     },
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: qk.appts(scope) });
+      qc.invalidateQueries({ queryKey: key });
     },
   });
 }

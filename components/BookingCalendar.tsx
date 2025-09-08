@@ -27,7 +27,11 @@ function dayToISO(date: Date | null) {
   if (!date) return null;
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return d.toISOString().slice(0, 10); // <-- user's local tz (WRONG for LA)
+}
+
+function dayToLAISO(date: Date | null) {
+  return date ? formatInTimeZone(date, APP_TZ, "yyyy-MM-dd") : null;
 }
 
 type Appointment = {
@@ -74,7 +78,7 @@ export default function BookingCalendar() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [isBooking, setIsBooking] = useState(false);
-  const isoDay = dayToISO(selectedDate);
+  const isoDay = dayToLAISO(selectedDate);
 
   // NEW: presets state
   const [useCustomInput, setUseCustomInput] = useState(false);
@@ -253,10 +257,11 @@ export default function BookingCalendar() {
         }}
         value={selectedDate}
         tileDisabled={({ date }) => {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const isPast = date < today;
-          const isTuesday = date.getDay() === 2;
+          const laCell = formatInTimeZone(date, APP_TZ, "yyyy-MM-dd");
+          const laToday = formatInTimeZone(new Date(), APP_TZ, "yyyy-MM-dd");
+          const isPast = laCell < laToday; // string compare OK for yyyy-MM-dd
+          const isTuesday =
+            formatInTimeZone(date, APP_TZ, "EEEE") === "Tuesday";
           return isPast || isTuesday;
         }}
       />

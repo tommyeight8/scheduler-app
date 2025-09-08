@@ -14,10 +14,11 @@ import {
 } from "recharts";
 import { useRevenue } from "@/hooks/useRevenue";
 import { formatInTimeZone } from "date-fns-tz";
+import { addDays } from "date-fns";
 import { APP_TZ } from "@/utils/datetime";
 import LoadingSpinner from "./LoadingSpinner";
 
-const nf = new Intl.NumberFormat(undefined, {
+const nf = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   maximumFractionDigits: 0,
@@ -27,7 +28,7 @@ export default function RevenueChart({
   defaultGranularity = "day",
   from,
   to,
-  tz = APP_TZ,
+  tz = APP_TZ, // 👈 default to LA
 }: {
   defaultGranularity?: "day" | "week" | "month";
   from?: string;
@@ -37,22 +38,36 @@ export default function RevenueChart({
   const [gran, setGran] = useState<"day" | "week" | "month">(
     defaultGranularity
   );
+
+  // If you pass from/to, they’ll be sent to the hook as-is.
+  // The API should bucket using the provided `tz` (LA) on the server.
   const { data = [], isLoading } = useRevenue({
     granularity: gran,
     from,
     to,
-    tz,
+    tz, // 👈 ensure server groups by LA-local boundaries
   });
 
   const chartData = useMemo(() => {
     return (data ?? []).map((d) => {
-      const dt = new Date(d.bucketStart);
-      const label =
-        gran === "month"
-          ? formatInTimeZone(dt, tz, "LLL yyyy")
-          : gran === "week"
-          ? formatInTimeZone(dt, tz, "LLL d") + " wk"
-          : formatInTimeZone(dt, tz, "LLL d");
+      // d.bucketStart should be an ISO timestamp at the *start* of the bucket in UTC.
+      const start = new Date(d.bucketStart);
+
+      // Labels rendered in LA time
+      let label: string;
+      if (gran === "month") {
+        label = formatInTimeZone(start, tz, "LLL yyyy");
+      } else if (gran === "week") {
+        // Show LA-local week range like "Sep 8–Sep 14"
+        const end = addDays(start, 6);
+        const s = formatInTimeZone(start, tz, "LLL d");
+        const e = formatInTimeZone(end, tz, "LLL d");
+        label = `${s}–${e}`;
+      } else {
+        // day
+        label = formatInTimeZone(start, tz, "LLL d");
+      }
+
       return {
         x: label,
         revenue: d.revenueCents / 100,
@@ -64,12 +79,13 @@ export default function RevenueChart({
   return (
     <div className="bg-white rounded-xl p-4 shadow-lg/5">
       <div className="flex items-center justify-between mb-3">
-        <h3>
+        <h3 className="flex items-center gap-2">
           <span className="font-semibold">Revenue</span>
           <span className="text-gray-600 bg-gray-200 px-3 py-1 rounded-3xl text-sm hidden md:inline-block">
-            Finised Appointments
+            Finished Appointments
           </span>
         </h3>
+
         <div className="inline-flex rounded-lg overflow-hidden border border-gray-300">
           {(["day", "week", "month"] as const).map((g) => (
             <button
@@ -108,6 +124,7 @@ export default function RevenueChart({
               />
               <YAxis yAxisId="right" orientation="right" />
               <Tooltip
+                // revenue in USD, count as plain int
                 formatter={(value: any, name: string) =>
                   name === "revenue" ? nf.format(value) : value
                 }
@@ -130,6 +147,7 @@ export default function RevenueChart({
           </ResponsiveContainer>
         </div>
       )}
+
       <div className="mt-2 text-sm text-gray-500 flex gap-4">
         <span>
           Total: {nf.format(chartData.reduce((s, d) => s + d.revenue, 0))}

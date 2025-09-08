@@ -3,24 +3,22 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { qk } from "@/lib/queryKeys";
 import type { AppointmentStatus } from "@/app/generated/prisma";
 
 export type Appointment = {
   id: number;
-  date: string;
+  date: string; // ISO UTC
   customerName: string;
   phoneNumber: string;
   status: AppointmentStatus;
   nailTech: { name: string } | null;
-
   serviceId?: number | null;
   serviceName: string;
   priceCents: number;
-
   hasDesign: boolean;
   designPriceCents?: number | null;
   designNotes?: string | null;
-
   serviceDurationMin?: number | null;
 };
 
@@ -32,22 +30,20 @@ async function getJSON<T>(url: string) {
 
 const isYMD = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-/** Fetch appointments scoped to a YYYY-MM-DD date.
- *  You can pass `initial` from the server page to hydrate the first render.
- */
+/** Date-scoped query (YYYY-MM-DD). `initial` hydrates from the server page. */
 export function useAppointments(date?: string, initial?: Appointment[]) {
-  const enabled = isYMD(date);
-  const key = ["appointments", enabled ? date : "pending"] as const;
+  const enabled = /^\d{4}-\d{2}-\d{2}$/.test(date ?? "");
+  const key = enabled ? qk.apptsByDate(date!) : qk.apptsByDate("pending");
 
   return useQuery({
     queryKey: key,
+    enabled,
     queryFn: async () =>
       (
         await getJSON<{ appointments: Appointment[] }>(
-          `/api/appointments/date/${date}`
+          `/api/appointments?date=${date}`
         )
       ).appointments ?? [],
-    enabled, // don't run until date is valid
     ...(initial && enabled ? { initialData: initial } : {}),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -57,7 +53,9 @@ export function useAppointments(date?: string, initial?: Appointment[]) {
 
 export function useUpdateAppointmentStatus(date?: string) {
   const qc = useQueryClient();
-  const key = ["appointments", isYMD(date) ? date : "pending"] as const;
+  const key = /^\d{4}-\d{2}-\d{2}$/.test(date ?? "")
+    ? qk.apptsByDate(date!)
+    : qk.apptsByDate("pending");
 
   return useMutation({
     mutationFn: async (vars: { id: number; status: AppointmentStatus }) => {
@@ -84,11 +82,7 @@ export function useUpdateAppointmentStatus(date?: string) {
       if (ctx?.prev) qc.setQueryData(key, ctx.prev);
       toast.error("Error updating status");
     },
-    onSuccess: () => {
-      toast.success("Status updated");
-    },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: key });
-    },
+    onSuccess: () => toast.success("Status updated"),
+    onSettled: () => qc.invalidateQueries({ queryKey: key, exact: true }),
   });
 }

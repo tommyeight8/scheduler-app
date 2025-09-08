@@ -1,12 +1,14 @@
+// hooks/useBookingData.tsx  (your first file)
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { qk } from "@/lib/queryKeys";
 
+// --- types (unchanged) ---
 type Appointment = {
   id: number | string;
-  date: string;
+  date: string; // ISO UTC from API
   status: string;
   nailTech?: { id: number | string; name: string };
 };
@@ -53,17 +55,27 @@ export function useNailTechs() {
   });
 }
 
-/** Appointments are looked up for the selected day. Pass an ISO for the day (e.g., 2025-09-05). */
-export function useAppointmentsForDay(isoDate: string | null) {
+/** Appointments looked up for a specific LA-local day (YYYY-MM-DD). */
+// hooks/useBookingData.tsx
+export function useAppointmentsForDay(ymd: string | null) {
+  const enabled = !!ymd;
+  const key = enabled ? qk.apptsByDate(ymd!) : qk.apptsByDate("pending");
+
   return useQuery({
-    enabled: !!isoDate,
-    queryKey: isoDate ? qk.apptsByDate(isoDate) : ["appointments", "disabled"],
-    queryFn: async () =>
-      (await getJSON<{ appointments: Appointment[] }>("/api/appointments"))
-        .appointments ?? [],
-    // If your /api/appointments accepts a date filter, switch to `/api/appointments?date=...`
-    // and you’ll fetch only the day you need (faster).
+    queryKey: key,
+    enabled,
+    queryFn: async () => {
+      const r = await fetch(`/api/appointments?date=${ymd}`, {
+        cache: "no-store",
+      });
+      if (!r.ok) throw new Error("Failed to load appointments");
+      const { appointments } = (await r.json()) as {
+        appointments: Appointment[];
+      };
+      return appointments ?? [];
+    },
     refetchOnWindowFocus: false,
+    staleTime: 30_000,
   });
 }
 
@@ -81,39 +93,15 @@ export function useCreateAppointment() {
       return data;
     },
     onSuccess: (_data, vars) => {
-      toast.success("Appointment booked successfully!");
-      // Invalidate the specific day so the grid updates
-      const isoDay = vars._dayISO as string | undefined;
-      if (isoDay) qc.invalidateQueries({ queryKey: qk.apptsByDate(isoDay) });
-      // If a new tech was added as part of booking, refresh techs
+      const day = vars._dayISO as string | undefined; // <-- LA yyyy-MM-dd
+      if (day)
+        qc.invalidateQueries({ queryKey: qk.apptsByDate(day), exact: true });
       if (vars.nailTechName && !vars.nailTechId) {
-        qc.invalidateQueries({ queryKey: qk.nailTechs() });
+        qc.invalidateQueries({ queryKey: qk.nailTechs(), exact: true });
       }
-    },
-    onError: (e: any) => {
-      toast.error(e?.message || "Failed to book appointment.");
-    },
-  });
-}
-
-export function useCreateNailTech() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (name: string) => {
-      const r = await fetch("/api/nail-tech", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data?.error ?? "Failed to create nail tech.");
-      return data.nailTech as NailTech;
-    },
-    onSuccess: () => {
-      toast.success("Nail tech created");
-      qc.invalidateQueries({ queryKey: qk.nailTechs() });
+      toast.success("Appointment booked successfully!");
     },
     onError: (e: any) =>
-      toast.error(e?.message || "Failed to create nail tech."),
+      toast.error(e?.message || "Failed to book appointment."),
   });
 }

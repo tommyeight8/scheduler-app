@@ -1,6 +1,10 @@
+// app/api/appointments/route.ts
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { fromZonedTime } from "date-fns-tz";
+
+const APP_TZ = "America/Los_Angeles";
 
 export async function POST(req: Request) {
   const { userId: clerkUserId } = await auth();
@@ -9,14 +13,14 @@ export async function POST(req: Request) {
 
   const body = await req.json();
   const {
-    date,
+    date, // should be a UTC ISO string from your client (localSlotToUtcISO)
     customerName,
     phoneNumber,
     nailTechId,
     nailTechName,
     serviceId,
     addDesign,
-    designPrice, // USD number when custom
+    designPrice,
     designNotes,
   } = body as {
     date: string;
@@ -58,7 +62,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid service." }, { status: 400 });
     }
 
-    // Resolve or create nail tech
+    // Resolve/create tech if needed
     let finalNailTechId = nailTechId;
     if (!finalNailTechId && nailTechName) {
       const created = await prisma.nailTech.upsert({
@@ -70,9 +74,13 @@ export async function POST(req: Request) {
       finalNailTechId = created.id;
     }
 
+    // date should be a valid UTC ISO (e.g. "2025-09-07T21:30:00.000Z")
     const appointmentDate = new Date(date);
+    if (Number.isNaN(appointmentDate.getTime())) {
+      return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+    }
 
-    // Same-minute guard (you should also have a duration-overlap check server-side)
+    // simple same-minute guard
     if (finalNailTechId) {
       const conflict = await prisma.appointment.findFirst({
         where: { nailTechId: finalNailTechId, date: appointmentDate },
@@ -86,7 +94,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // Design snapshot
+    // design snapshot
     const wantsDesign = Boolean(addDesign);
     let hasDesign = false;
     let designPriceCentsSnapshot: number | null = null;
@@ -127,7 +135,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Create with snapshots
     const created = await prisma.appointment.create({
       data: {
         date: appointmentDate,
@@ -151,7 +158,6 @@ export async function POST(req: Request) {
         customerName: true,
         phoneNumber: true,
         status: true,
-        // ✅ include id here
         nailTech: { select: { id: true, name: true } },
         serviceId: true,
         serviceName: true,
@@ -162,8 +168,12 @@ export async function POST(req: Request) {
       },
     });
 
+    // return date as ISO so client typing is consistent
     return NextResponse.json(
-      { success: true, appointment: created },
+      {
+        success: true,
+        appointment: { ...created, date: created.date.toISOString() },
+      },
       { status: 201 }
     );
   } catch (err) {
@@ -185,18 +195,19 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
 
   const url = new URL(req.url);
-  const date = url.searchParams.get("date");
+  const ymd = url.searchParams.get("date"); // "YYYY-MM-DD"
 
-  const whereDate = date
-    ? {
-        date: {
-          gte: new Date(`${date}T00:00:00.000Z`),
-          lt: new Date(`${date}T23:59:59.999Z`),
-        },
-      }
+  // LA-local day window -> UTC instants
+  const whereDate = ymd
+    ? (() => {
+        const start = fromZonedTime(`${ymd}T00:00:00`, APP_TZ); // LA midnight -> UTC
+        const end = new Date(start); // next LA midnight -> UTC
+        end.setUTCDate(end.getUTCDate() + 1);
+        return { date: { gte: start, lt: end } };
+      })()
     : {};
 
-  const appointments = await prisma.appointment.findMany({
+  const rows = await prisma.appointment.findMany({
     where: whereDate,
     orderBy: { date: "asc" },
     select: {
@@ -205,40 +216,32 @@ export async function GET(req: Request) {
       customerName: true,
       phoneNumber: true,
       status: true,
-      // ✅ include id here too
       nailTech: { select: { id: true, name: true } },
-
       serviceId: true,
       serviceName: true,
       priceCents: true,
-
       hasDesign: true,
       designPriceCents: true,
       designNotes: true,
-
       service: { select: { durationMin: true } },
     },
   });
 
-  const shaped = appointments.map((a) => ({
-    id: a.id,
-    date: a.date,
-    customerName: a.customerName,
-    phoneNumber: a.phoneNumber,
-    status: a.status,
-    // ✅ pass through id + name so the client can compare tech ids
-    nailTech: a.nailTech, // { id, name } | null
-
-    serviceId: a.serviceId,
-    serviceName: a.serviceName,
-    priceCents: a.priceCents,
-
-    hasDesign: a.hasDesign,
-    designPriceCents: a.designPriceCents,
-    designNotes: a.designNotes,
-
-    serviceDurationMin: a.service?.durationMin ?? null,
-  }));
-
-  return NextResponse.json({ appointments: shaped });
+  return NextResponse.json({
+    appointments: rows.map((a) => ({
+      id: a.id,
+      date: a.date.toISOString(), // normalize to ISO string
+      customerName: a.customerName,
+      phoneNumber: a.phoneNumber,
+      status: a.status,
+      nailTech: a.nailTech, // { id, name } | null
+      serviceId: a.serviceId,
+      serviceName: a.serviceName,
+      priceCents: a.priceCents,
+      hasDesign: a.hasDesign,
+      designPriceCents: a.designPriceCents,
+      designNotes: a.designNotes,
+      serviceDurationMin: a.service?.durationMin ?? null,
+    })),
+  });
 }

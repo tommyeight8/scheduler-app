@@ -2,6 +2,7 @@
 import { format, parseISO } from "date-fns";
 import AppointmentTable from "@/components/AppointmentTable";
 import { prisma } from "@/lib/prisma";
+import { laDayStartUtc, laNextDayStartUtc } from "@/utils/tz";
 
 function isYMD(s: unknown): s is string {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -20,12 +21,11 @@ export default async function AppointmentsByDatePage(ctx: any) {
   }
 
   const date = raw;
-  const start = new Date(`${date}T00:00:00.000Z`);
-  const next = new Date(`${date}T00:00:00.000Z`);
-  next.setUTCDate(next.getUTCDate() + 1);
+  const start = laDayStartUtc(date); // ✅ LA-local 00:00 → UTC
+  const end = laNextDayStartUtc(date); // ✅ next LA-local 00:00 → UTC
 
   const rows = await prisma.appointment.findMany({
-    where: { date: { gte: start, lt: next } },
+    where: { date: { gte: start, lt: end } },
     orderBy: { date: "asc" },
     include: { nailTech: true, service: { select: { durationMin: true } } },
   });
@@ -36,23 +36,17 @@ export default async function AppointmentsByDatePage(ctx: any) {
     status: a.status,
     customerName: a.customerName,
     phoneNumber: a.phoneNumber,
-
     nailTechId: a.nailTechId,
     nailTech: a.nailTech ? { id: a.nailTech.id, name: a.nailTech.name } : null,
-
     serviceId: a.serviceId,
     serviceName: a.serviceName,
     priceCents: a.priceCents,
     serviceDurationMin: a.service?.durationMin ?? null,
-
     hasDesign: a.hasDesign,
     designPriceCents: a.designPriceCents,
     designNotes: a.designNotes,
-
-    // serialize dates for client component
     date: a.date.toISOString(),
     finishedAt: a.finishedAt ? a.finishedAt.toISOString() : null,
-
     totalCents: a.totalCents ?? null,
   }));
 
@@ -65,7 +59,10 @@ export default async function AppointmentsByDatePage(ctx: any) {
       {initialAppointments.length === 0 ? (
         <p className="text-gray-500">No appointments booked for this day.</p>
       ) : (
-        <AppointmentTable initialAppointments={initialAppointments} />
+        <AppointmentTable
+          scope={date} // make the client query key line up
+          initialAppointments={initialAppointments}
+        />
       )}
     </div>
   );

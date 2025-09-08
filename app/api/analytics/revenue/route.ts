@@ -7,6 +7,7 @@ export const runtime = "nodejs"; // Prisma must run on Node
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
+
     const gran = (searchParams.get("granularity") ?? "day") as
       | "day"
       | "week"
@@ -15,17 +16,19 @@ export async function GET(req: Request) {
     const to = searchParams.get("to"); // YYYY-MM-DD (optional)
     const tz = searchParams.get("tz") ?? "America/Los_Angeles";
 
+    // Postgres date_trunc unit
     const g = gran === "week" ? "week" : gran === "month" ? "month" : "day";
 
-    // Simple UTC-day bounds; if you need shop-TZ day bounds, we can adjust.
-    const fromTs = from ? new Date(`${from}T00:00:00.000Z`) : null;
-    const toTs = to ? new Date(`${to}T23:59:59.999Z`) : null;
+    // Leave these as text and handle nulls in SQL; comparisons are done in LA-local time.
+    const fromStr: string | null = from ?? null;
+    const toStr: string | null = to ?? null;
 
     const rows = await prisma.$queryRaw<
-      { bucket_start: Date; appt_count: bigint; revenue_cents: bigint }[]
+      { bucket_start_utc: Date; appt_count: bigint; revenue_cents: bigint }[]
     >`
       SELECT
-        date_trunc(${g}, ("date" AT TIME ZONE ${tz})) AS bucket_start,
+        -- Truncate *in LA local time*, then convert that local midnight back to UTC.
+        (date_trunc(${g}, ("date" AT TIME ZONE ${tz})) AT TIME ZONE ${tz}) AS bucket_start_utc,
         COUNT(*) FILTER (WHERE "status" = 'done'::"AppointmentStatus") AS appt_count,
         COALESCE(SUM(
           CASE WHEN "status" = 'done'::"AppointmentStatus"
@@ -34,14 +37,17 @@ export async function GET(req: Request) {
           END
         ), 0) AS revenue_cents
       FROM "Appointment"
-      WHERE (${fromTs}::timestamptz IS NULL OR "date" >= ${fromTs})
-        AND (${toTs}::timestamptz   IS NULL OR "date" <  ${toTs})
+      WHERE
+        -- Filter by *LA-local day* window: from <= local time < to+1day
+        (${fromStr}::text IS NULL OR ("date" AT TIME ZONE ${tz}) >= (${fromStr}::date))
+        AND
+        (${toStr}::text   IS NULL OR ("date" AT TIME ZONE ${tz}) <  ((${toStr}::date) + INTERVAL '1 day'))
       GROUP BY 1
       ORDER BY 1 ASC;
     `;
 
     const data = rows.map((r) => ({
-      bucketStart: r.bucket_start.toISOString(),
+      bucketStart: r.bucket_start_utc.toISOString(), // UTC ISO—safe for client
       count: Number(r.appt_count ?? 0),
       revenueCents: Number(r.revenue_cents ?? 0),
     }));

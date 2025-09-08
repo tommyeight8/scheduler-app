@@ -16,8 +16,14 @@ export function Header() {
         >
           <PiPaintBrushFill />
         </Link>
-        <Link href="/dashboard/appointments" className="hover:underline">
+        <Link href="/dashboard/booking" className="hover:underline">
           Appointments
+        </Link>
+        <Link
+          href="/dashboard/appointments/history"
+          className="hover:underline"
+        >
+          History
         </Link>
       </div>
 

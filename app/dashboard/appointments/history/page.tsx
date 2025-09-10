@@ -26,8 +26,8 @@ export default function HistoryPage() {
   console.log(selectedDate, scope);
 
   return (
-    <div className="grid gap-6 md:grid-cols-[320px_1fr] max-w-[1100px] mx-auto p-6">
-      <div className="bg-white p-3 rounded shadow">
+    <div className="grid gap-6 md:grid-cols-[320px_1fr] max-w-[1100px] mx-auto p-2">
+      <div className="bg-white p-3 rounded shadow min-w-0">
         <Calendar
           value={selectedDate}
           onChange={(d) => setSelectedDate(d as Date)}
@@ -39,7 +39,7 @@ export default function HistoryPage() {
         />
       </div>
 
-      <div className="bg-white p-3 rounded shadow">
+      <div className="bg-white p-3 rounded shadow min-w-0 overflow-hidden">
         <h2 className="text-lg font-semibold mb-3">
           {formatInTimeZone(selectedDate, APP_TZ, "PPPP")}
         </h2>

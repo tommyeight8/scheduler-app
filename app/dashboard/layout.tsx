@@ -20,7 +20,7 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen font-sans bg-gray-100">
       <Header />
-      <div className="max-w-5xl mx-auto p-0 md:p-6">
+      <div className="max-w-5xl mx-auto px-3 py-6 md:p-6">
         <ClientProviders>{children}</ClientProviders>
       </div>
     </div>

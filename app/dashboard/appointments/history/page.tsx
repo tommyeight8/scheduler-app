@@ -26,7 +26,7 @@ export default function HistoryPage() {
   console.log(selectedDate, scope);
 
   return (
-    <div className="grid gap-6 md:grid-cols-[320px_1fr] max-w-[1100px] mx-auto p-2">
+    <div className="grid gap-6 md:grid-cols-[320px_1fr] max-w-[1100px] mx-auto">
       <div className="bg-white p-3 rounded shadow min-w-0">
         <Calendar
           value={selectedDate}
